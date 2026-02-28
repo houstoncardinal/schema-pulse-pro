@@ -89,9 +89,20 @@ const Index = () => {
   const [url, setUrl] = useState("");
   const navigate = useNavigate();
 
+  const normalizeUrl = (input: string): string => {
+    let normalized = input.trim();
+    if (!normalized) return "";
+    // Remove leading www. for consistency, then add protocol
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = `https://${normalized}`;
+    }
+    return normalized;
+  };
+
   const handleAudit = (e: React.FormEvent) => {
     e.preventDefault();
-    navigate(`/app/audit/new${url ? `?url=${encodeURIComponent(url)}` : ""}`);
+    const normalized = normalizeUrl(url);
+    navigate(`/app/audit/new${normalized ? `?url=${encodeURIComponent(normalized)}` : ""}`);
   };
 
   return (
@@ -151,8 +162,8 @@ const Index = () => {
             <div className="relative flex-1 w-full">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <Input
-                type="url"
-                placeholder="Enter your website URL..."
+                type="text"
+                placeholder="example.com, www.example.com, or https://example.com"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 className="pl-12 h-14 text-base bg-secondary border-border focus:border-primary focus:ring-primary/20 rounded-xl"
