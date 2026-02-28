@@ -28,9 +28,20 @@ const NewAudit = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  const normalizeUrl = (input: string): string => {
+    let normalized = input.trim();
+    if (!normalized) return "";
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = `https://${normalized}`;
+    }
+    return normalized;
+  };
+
   const handleStartAudit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url) return;
+    const normalized = normalizeUrl(url);
+    if (!normalized) return;
+    setUrl(normalized);
 
     setIsRunning(true);
     setProgress(0);
@@ -64,8 +75,8 @@ const NewAudit = () => {
               <div className="relative">
                 <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <Input
-                  type="url"
-                  placeholder="https://example.com"
+                  type="text"
+                  placeholder="example.com, www.example.com, or https://example.com"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   className="pl-12 h-14 text-base bg-secondary border-border rounded-xl"
