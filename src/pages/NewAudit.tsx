@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -15,10 +15,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
+import { createAudit, getAudit } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 const NewAudit = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [url, setUrl] = useState(searchParams.get("url") || "");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [maxPages, setMaxPages] = useState([50]);
@@ -26,38 +29,69 @@ const NewAudit = () => {
   const [respectRobots, setRespectRobots] = useState(true);
   const [followSitemap, setFollowSitemap] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [auditStatus, setAuditStatus] = useState("");
+  const [pagesCrawled, setPagesCrawled] = useState(0);
+  const [pagesTotal, setPagesTotal] = useState(0);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const normalizeUrl = (input: string): string => {
-    let normalized = input.trim();
-    if (!normalized) return "";
-    if (!/^https?:\/\//i.test(normalized)) {
-      normalized = `https://${normalized}`;
-    }
-    return normalized;
-  };
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
 
   const handleStartAudit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const normalized = normalizeUrl(url);
-    if (!normalized) return;
-    setUrl(normalized);
-
+    let normalizedUrl = url.trim();
+    if (!normalizedUrl) return;
+    if (!/^https?:\/\//i.test(normalizedUrl)) {
+      normalizedUrl = `https://${normalizedUrl}`;
+    }
+    setUrl(normalizedUrl);
     setIsRunning(true);
-    setProgress(0);
+    setAuditStatus("Starting audit...");
 
-    // Simulate crawl progress
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setTimeout(() => navigate("/app/results"), 500);
-          return 100;
-        }
-        return prev + Math.random() * 8 + 2;
+    try {
+      const audit = await createAudit({
+        url: normalizedUrl,
+        maxPages: maxPages[0],
+        maxDepth: maxDepth[0],
+        respectRobots,
+        followSitemap,
       });
-    }, 300);
+
+      // Poll for status updates
+      pollingRef.current = setInterval(async () => {
+        try {
+          const updated = await getAudit(audit.id);
+          setAuditStatus(updated.status);
+          setPagesCrawled(updated.pages_crawled || 0);
+          setPagesTotal(updated.pages_total || maxPages[0]);
+
+          if (updated.status === "completed") {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            toast({ title: "Audit Complete", description: `Score: ${updated.overall_score}/100` });
+            setTimeout(() => navigate(`/app/results?audit=${audit.id}`), 1000);
+          } else if (updated.status === "failed") {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            toast({ title: "Audit Failed", description: updated.error_message || "Unknown error", variant: "destructive" });
+            setIsRunning(false);
+          }
+        } catch (err) {
+          console.error("Polling error:", err);
+        }
+      }, 3000);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message || "Failed to start audit", variant: "destructive" });
+      setIsRunning(false);
+    }
   };
+
+  const progress = pagesTotal > 0 ? Math.min(100, (pagesCrawled / pagesTotal) * 100) : 0;
+  const statusLabel = auditStatus === "crawling" ? `Crawling pages... (${pagesCrawled}/${pagesTotal})`
+    : auditStatus === "analyzing" ? "Analyzing schema & SEO..."
+    : auditStatus === "completed" ? "Generating report..."
+    : "Starting audit...";
 
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto">
@@ -69,7 +103,6 @@ const NewAudit = () => {
 
         {!isRunning ? (
           <form onSubmit={handleStartAudit} className="space-y-6">
-            {/* URL Input */}
             <div className="space-y-2">
               <Label className="text-foreground">Website URL</Label>
               <div className="relative">
@@ -85,7 +118,6 @@ const NewAudit = () => {
               </div>
             </div>
 
-            {/* Quick Checks */}
             <div className="grid grid-cols-3 gap-3">
               {[
                 { icon: Search, label: "Schema Validation", desc: "JSON-LD, Microdata, RDFa" },
@@ -100,7 +132,6 @@ const NewAudit = () => {
               ))}
             </div>
 
-            {/* Advanced Settings */}
             <div className="rounded-xl bg-card border border-border overflow-hidden">
               <button
                 type="button"
@@ -123,7 +154,6 @@ const NewAudit = () => {
                     </div>
                     <Slider value={maxPages} onValueChange={setMaxPages} min={1} max={500} step={1} />
                   </div>
-
                   <div className="space-y-3">
                     <div className="flex justify-between">
                       <Label className="text-sm text-foreground">Max Depth</Label>
@@ -131,12 +161,10 @@ const NewAudit = () => {
                     </div>
                     <Slider value={maxDepth} onValueChange={setMaxDepth} min={1} max={10} step={1} />
                   </div>
-
                   <div className="flex items-center justify-between">
                     <Label className="text-sm text-foreground">Respect robots.txt</Label>
                     <Switch checked={respectRobots} onCheckedChange={setRespectRobots} />
                   </div>
-
                   <div className="flex items-center justify-between">
                     <Label className="text-sm text-foreground">Follow sitemap.xml</Label>
                     <Switch checked={followSitemap} onCheckedChange={setFollowSitemap} />
@@ -155,7 +183,6 @@ const NewAudit = () => {
             </Button>
           </form>
         ) : (
-          /* Progress View */
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -164,21 +191,15 @@ const NewAudit = () => {
             <div className="relative w-24 h-24 mx-auto">
               <Loader2 className="w-24 h-24 text-primary animate-spin" />
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-lg font-bold text-foreground">{Math.min(100, Math.round(progress))}%</span>
+                <span className="text-lg font-bold text-foreground">
+                  {pagesTotal > 0 ? `${Math.round(progress)}%` : "..."}
+                </span>
               </div>
             </div>
 
             <div>
               <h2 className="text-lg font-semibold text-foreground">Auditing {url}</h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                {progress < 30
-                  ? "Crawling pages..."
-                  : progress < 60
-                  ? "Extracting schema markup..."
-                  : progress < 85
-                  ? "Running SEO checks..."
-                  : "Generating report..."}
-              </p>
+              <p className="text-sm text-muted-foreground mt-1">{statusLabel}</p>
             </div>
 
             <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
